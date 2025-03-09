@@ -1,36 +1,100 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.responses import FileResponse
 import os
+import shutil
+from pathlib import Path
+import mysql.connector
 
 app = FastAPI()
 
-# Carpeta donde se almacenarán los archivos
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Conectar con MySQL en InfinityFree
+db = mysql.connector.connect(
+    host="sql301.infinityfree.com",  # Reemplaza con el host de InfinityFree
+    user="if0_38476765",
+    password="y75c4CZx6gL86fg",
+    database="if0_38476765_vortexdb"
+)
+cursor = db.cursor()
 
-@app.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
-    file_location = os.path.join(UPLOAD_FOLDER, file.filename)
+# Carpeta principal de almacenamiento
+BASE_UPLOAD_FOLDER = Path("uploads")
+BASE_UPLOAD_FOLDER.mkdir(exist_ok=True)
+
+# Tamaño máximo de archivos (10 MB)
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+def get_safe_filename(filename: str) -> str:
+    """Evita ataques de path traversal"""
+    return os.path.basename(filename)
+
+def get_user_folder(user_id: int) -> Path:
+    """Devuelve la carpeta de almacenamiento del usuario"""
+    user_folder = BASE_UPLOAD_FOLDER / str(user_id)
+    user_folder.mkdir(exist_ok=True)  # Crea la carpeta si no existe
+    return user_folder
+
+def validate_user(user_id: int):
+    """Verifica si el usuario existe en la base de datos"""
+    cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+@app.post("/upload/{user_id}/")
+async def upload_file(user_id: int, file: UploadFile = File(...)):
+    validate_user(user_id)
+
+    # Verificar el tamaño
+    file_size = file.file.seek(0, os.SEEK_END)
+    file.file.seek(0)
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx. 10MB)")
+
+    filename = get_safe_filename(file.filename)
+    user_folder = get_user_folder(user_id)
+    file_location = user_folder / filename
+
+    # Evitar sobrescritura
+    counter = 1
+    while file_location.exists():
+        file_location = user_folder / f"{filename.rsplit('.', 1)[0]}_{counter}.{filename.rsplit('.', 1)[-1]}"
+        counter += 1
+
     with open(file_location, "wb") as buffer:
-        buffer.write(await file.read())
-    return {"filename": file.filename, "message": "File uploaded successfully"}
+        shutil.copyfileobj(file.file, buffer)
 
-@app.get("/download/{filename}")
-async def download_file(filename: str):
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, filename=filename)
+    return {"filename": filename, "message": "Archivo subido con éxito"}
 
-@app.delete("/delete/{filename}")
-async def delete_file(filename: str):
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    os.remove(file_path)
-    return {"message": "File deleted successfully"}
+@app.get("/download/{user_id}/{filename}")
+async def download_file(user_id: int, filename: str):
+    validate_user(user_id)
 
-@app.get("/list/")
-async def list_files():
-    files = os.listdir(UPLOAD_FOLDER)
+    safe_filename = get_safe_filename(filename)
+    file_path = get_user_folder(user_id) / safe_filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    return FileResponse(file_path, filename=safe_filename)
+
+@app.delete("/delete/{user_id}/{filename}")
+async def delete_file(user_id: int, filename: str):
+    validate_user(user_id)
+
+    safe_filename = get_safe_filename(filename)
+    file_path = get_user_folder(user_id) / safe_filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    file_path.unlink()
+    return {"message": "Archivo eliminado con éxito"}
+
+@app.get("/list/{user_id}/")
+async def list_files(user_id: int):
+    validate_user(user_id)
+
+    user_folder = get_user_folder(user_id)
+    files = [f.name for f in user_folder.iterdir() if f.is_file()]
+    
     return {"files": files}
