@@ -1,20 +1,33 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 import os
 import shutil
 from pathlib import Path
-import mysql.connector
+import pymysql
 
 app = FastAPI()
 
-# Conectar con MySQL en InfinityFree
-db = mysql.connector.connect(
-    host="sql301.infinityfree.com",  # Reemplaza con el host de InfinityFree
-    user="if0_38476765",
-    password="y75c4CZx6gL86fg",
-    database="if0_38476765_vortexdb"
-)
-cursor = db.cursor()
+# Datos de conexión a MySQL en Railway
+DB_HOST = "gondola.proxy.rlwy.net"
+DB_USER = "root"
+DB_PASSWORD = "GXEBZnKBAXxMfJNjHeSoAcQgVPlCnseN"
+DB_NAME = "railway"
+DB_PORT = 52136
+
+# Conectar con la base de datos MySQL
+try:
+    conn = pymysql.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        port=DB_PORT,
+        ssl={"ssl": {}}
+    )
+    print("✅ Conexión exitosa a MySQL en Railway")
+    cursor = conn.cursor()
+except Exception as e:
+    print(f"❌ Error de conexión a MySQL: {e}")
 
 # Carpeta principal de almacenamiento
 BASE_UPLOAD_FOLDER = Path("uploads")
